@@ -1,0 +1,94 @@
+pipeline {
+    agent any
+
+    tools {
+        jdk 'jdk17'
+        maven 'maven3'
+    }
+
+    environment {
+        AWS_REGION = 'us-east-1'
+        AWS_ACCOUNT_ID = credentials('aws-account-id')
+        ECR_BACKEND = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-backend"
+        ECR_FRONTEND = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-frontend"
+        EKS_CLUSTER = 'ecommerce-eks'
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Backend Test') {
+            steps {
+                dir('backend') {
+                    sh 'mvn clean test'
+                }
+            }
+        }
+
+        stage('SonarQube') {
+            steps {
+                dir('backend') {
+                    sh 'mvn sonar:sonar'
+                }
+            }
+        }
+
+        stage('Trivy Scan') {
+            steps {
+                sh 'trivy fs --exit-code 0 --severity HIGH,CRITICAL .'
+            }
+        }
+
+        stage('Docker Build') {
+            steps {
+                sh 'docker build -t $ECR_BACKEND:latest ./backend'
+                sh 'docker build -t $ECR_FRONTEND:latest ./frontend'
+            }
+        }
+
+        stage('ECR Push') {
+            steps {
+                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'aws-credentials']]) {
+                    sh '''
+                      aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+                      docker push $ECR_BACKEND:latest
+                      docker push $ECR_FRONTEND:latest
+                    '''
+                }
+            }
+        }
+
+        stage('Deploy to EKS') {
+            steps {
+                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'aws-credentials']]) {
+                    sh '''
+                      aws eks update-kubeconfig --region $AWS_REGION --name $EKS_CLUSTER
+                      kubectl apply -f k8s/namespace.yaml
+                      kubectl apply -f k8s/configmap.yaml
+                      kubectl apply -f k8s/secret.yaml
+                      kubectl apply -f k8s/backend-deployment.yaml
+                      kubectl apply -f k8s/backend-service.yaml
+                      kubectl apply -f k8s/frontend-deployment.yaml
+                      kubectl apply -f k8s/frontend-service.yaml
+                      kubectl apply -f k8s/ingress.yaml
+                      kubectl apply -f k8s/hpa.yaml
+                      kubectl rollout status deployment/backend -n ecommerce
+                      kubectl rollout status deployment/frontend -n ecommerce
+                    '''
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            sh 'docker image prune -f || true'
+        }
+    }
+}

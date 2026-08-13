@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ecommerce-config
+  namespace: ecommerce
+data:
+  DB_URL: jdbc:mysql://YOUR-RDS-ENDPOINT:3306/ecommerce?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
