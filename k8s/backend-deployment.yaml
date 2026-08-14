@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: backend
-          image: YOUR_AWS_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/ecommerce-backend:latest
+          image: varun2299/ecommerce-backend:latest
           ports:
             - containerPort: 3000
           env:
